@@ -12,27 +12,40 @@
 
 (async function () {
     try {
-    // ── Guard: only index.html ──────────────────────────────────────────────
-    const path = window.location.pathname;
-    const isIndex = path.endsWith('index.html') || path === '/' || path === '';
-    if (!isIndex) return;
+        // ── Guard: only index.html ──────────────────────────────────────────────
+        const path = window.location.pathname;
+        const isIndex = path.endsWith('index.html') || path === '/' || path === '';
+        if (!isIndex) {
+            console.log('[intent_prompt] Not index.html, skipping');
+            return;
+        }
 
-    // ── Guard: already asked ────────────────────────────────────────────────
-    if (localStorage.getItem('manask_intent_asked')) return;
+        // ── Guard: already asked ────────────────────────────────────────────────
+        if (localStorage.getItem('manask_intent_asked')) {
+            console.log('[intent_prompt] Already asked, skipping');
+            return;
+        }
 
-    // ── Lazy imports (deferred so non-index pages pay no cost) ──────────────
-    const [{ showHintFloat }, { t, initI18n }, utils] = await Promise.all([
-        import('./hint_float.js'),
-        import('../i18n.js'),
-        import('../utils.js').then(m => ({ 
-            showInfo: m.showInfo, 
-            showError: m.showError, 
-            showSuccess: m.showSuccess, 
-            URL_API: m.URL_API 
-        })),
-    ]);
+        console.log('[intent_prompt] Starting...');
 
-    await initI18n();
+        // ── Lazy imports (deferred so non-index pages pay no cost) ──────────────
+        const [{ showHintFloat }, { t, initI18n }, utilsModule] = await Promise.all([
+            import('./hint_float.js').catch(e => { console.error('[import] hint_float failed:', e); throw e; }),
+            import('../i18n.js').catch(e => { console.error('[import] i18n failed:', e); throw e; }),
+            import('../utils.js').catch(e => { console.error('[import] utils failed:', e); throw e; }),
+        ]);
+
+        const utils = {
+            showInfo: utilsModule.showInfo,
+            showError: utilsModule.showError,
+            showSuccess: utilsModule.showSuccess,
+            URL_API: utilsModule.URL_API,
+        };
+
+        console.log('[intent_prompt] Imports successful. utils:', utils);
+
+        await initI18n();
+        console.log('[intent_prompt] i18n initialized');
 
     // ── onSubmit handler ────────────────────────────────────────────────────
     async function onSubmit(text) {

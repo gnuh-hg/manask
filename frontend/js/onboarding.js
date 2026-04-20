@@ -1,5 +1,6 @@
 (function () {
-    if (localStorage.getItem('manask_onboarded')) return;
+    try {
+        if (localStorage.getItem('manask_onboarded')) return;
 
     let currentStep = 1;
     const TOTAL_STEPS = 3;
@@ -192,5 +193,8 @@
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
+    }
+    } catch (err) {
+        console.error('[onboarding] Error:', err);
     }
 })();
