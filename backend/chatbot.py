@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from typing import Optional
 import anthropic
+import re
 
 import models, database, schemas
 from utils import SECRET_KEY, ALGORITHM
@@ -61,8 +62,29 @@ def validate_color(color: Optional[str]) -> str:
         return color
     return DEFAULT_COLOR
 
-
-
+def extract_roadmap_context(message: str):
+    """
+    Tách [ROADMAP_CONTEXT]...[/ROADMAP_CONTEXT] ra khỏi message.
+    Trả về (context_dict | None, clean_message).
+    """
+    match = re.search(
+        r'\[ROADMAP_CONTEXT\](.*?)\[/ROADMAP_CONTEXT\]',
+        message,
+        re.DOTALL
+    )
+    if match:
+        try:
+            context = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            context = None
+        clean = re.sub(
+            r'\[ROADMAP_CONTEXT\].*?\[/ROADMAP_CONTEXT\]',
+            '',
+            message,
+            flags=re.DOTALL
+        ).strip()
+        return context, clean
+    return None, message
 
 
 def enforce_history_limit(user_id: int, db: Session):
@@ -416,7 +438,7 @@ Only use colors from this exact list:
         print(f"  - Has data: {msg_data is not None}")
 
         # Validate type
-        if msg_type not in (None, "folder_tree", "roadmap", "statistic", "filter", "filter_applied"):
+        if msg_type not in (None, "folder_tree", "roadmap", "roadmap_update", "statistic", "filter", "filter_applied"):
             print(f"[CHATBOT] ⚠️ Invalid type '{msg_type}', fallback to None")
             msg_type = None
 
@@ -463,7 +485,51 @@ Only use colors from this exact list:
                 for node_key, node in nodes.items():
                     if "item" in node and "color" in node["item"]:
                         node["item"]["color"] = validate_color(node["item"].get("color"))
+        
+        # ✅ Validate roadmap_update structure
+        if msg_type == "roadmap_update" and msg_data:
+            target_id = msg_data.get("target_roadmap_id")
+            diff = msg_data.get("diff")
+ 
+            if not target_id or not isinstance(diff, dict):
+                print(f"[CHATBOT] ⚠️ roadmap_update invalid: missing target_roadmap_id or diff")
+                msg_type = None
+                msg_data = None
+            else:
+                # Fill missing diff keys với default rỗng
+                diff.setdefault("add_nodes", {})
+                diff.setdefault("update_nodes", {})
+                diff.setdefault("delete_nodes", [])
+                diff.setdefault("add_edges", [])
+                diff.setdefault("delete_edges", [])
+ 
+                # Validate colors trong add_nodes
+                for node_key, node in diff.get("add_nodes", {}).items():
+                    if "item" in node and "color" in node["item"]:
+                        node["item"]["color"] = validate_color(node["item"].get("color"))
+ 
+                # Validate colors trong update_nodes (nếu có field color)
+                for node_key, partial in diff.get("update_nodes", {}).items():
+                    if "item" in partial and "color" in partial["item"]:
+                        partial["item"]["color"] = validate_color(partial["item"].get("color"))
+ 
+                # Auto-cleanup: đảm bảo delete_nodes đi kèm delete_edges
+                deleted_keys = set(diff.get("delete_nodes", []))
+                if deleted_keys:
+                    existing_del_edges = {
+                        (e.get("from"), e.get("to"))
+                        for e in diff.get("delete_edges", [])
+                    }
+                    # Không thể tự biết edge nào tồn tại ở đây (không có roadmap state),
+                    # nhưng log cảnh báo nếu AI quên delete_edges khi delete_nodes không rỗng
+                    if not diff.get("delete_edges"):
+                        print(f"[CHATBOT] ⚠️ delete_nodes={list(deleted_keys)} nhưng delete_edges rỗng — AI có thể đã quên. Frontend sẽ auto-cleanup ghost edges.")
+ 
+                print(f"[CHATBOT]   - roadmap_update: target={target_id}")
+                print(f"[CHATBOT]   - add_nodes={len(diff['add_nodes'])}, update_nodes={len(diff['update_nodes'])}, delete_nodes={len(diff['delete_nodes'])}")
+                print(f"[CHATBOT]   - add_edges={len(diff['add_edges'])}, delete_edges={len(diff['delete_edges'])}")
 
+    
         # ✅ Validate filter structure
         if msg_type == "filter" and msg_data:
             if "logic" not in msg_data or "filters" not in msg_data:
